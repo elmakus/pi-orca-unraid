@@ -32,6 +32,7 @@ The container drops all capabilities and uses `no-new-privileges`. It has no Doc
 5. Check name/hostname `pi-orca`, network `ibraproxy`, the two mounts, `unless-stopped`, and a 30-second stop timeout. The only published port is `192.168.2.104:6769:6769/tcp`, not `0.0.0.0`.
    Orca 1.4.248 has a worst-case 35-second internal shutdown grace. The 30-second container deadline can truncate a stalled shutdown; smoke verifies ordinary shutdown with a live child finishes without SIGKILL. Saved-session persistence does not preserve a running process.
 6. Start the container, then check Docker health and `docker exec pi-orca timeout 10 orca-ide status`. Do not assume a listening TCP port alone proves readiness.
+7. Turn on Unraid's separate **Autostart** toggle for `pi-orca` if it must start after an array/server restart. Docker's `unless-stopped` policy alone does not replace DockerMan's autostart list.
 
 The template starts with `--no-pairing`. Pair each real device using the foreground procedure below. Keep access on LAN or UniFi Teleport VPN. Do not add an Internet port forward, Cloudflare Tunnel or mandatory Tailscale.
 
@@ -39,6 +40,7 @@ Equivalent initial command, after the preparation above:
 
 ```sh
 docker run -d --name pi-orca --hostname pi-orca \
+  --label net.unraid.docker.managed=dockerman \
   --network ibraproxy --restart unless-stopped --stop-timeout 30 \
   --cap-drop ALL --security-opt no-new-privileges \
   --env-file /mnt/user/appdata/codex-lb-clean/client-secrets/pi-unraid.env \
@@ -49,17 +51,19 @@ docker run -d --name pi-orca --hostname pi-orca \
   ghcr.io/elmakus/pi-orca:latest --no-pairing
 ```
 
+DockerMan adds its management label when it creates a container from the template. The equivalent CLI command must supply that label explicitly; otherwise the installed Unraid UI treats it as **3rd Party**, without its normal update controls or Autostart toggle.
+
 ## Pair Linux and Android privately
 
 A pairing URL/QR is a credential. Display it only in your private administrative terminal. Do not paste it into issues, Actions logs/artifacts or chat reports.
 
-Generate Linux and Android offers **sequentially in the same persistent HOME**, never with two Orca servers sharing a profile.
+Generate Linux and Android offers **sequentially in the same persistent HOME**, never with two Orca servers sharing a profile. Complete each client's pairing before generating the next offer; do not assume two unused offers remain valid together.
 
-1. Record the current image reference and stop only the new service: `docker inspect pi-orca --format '{{.Config.Image}}'`, then `docker stop -t 30 pi-orca`.
+1. Record the immutable registry reference with `docker image inspect "$(docker inspect pi-orca --format '{{.Image}}')" --format '{{range .RepoDigests}}{{println .}}{{end}}'`. Then stop only the new service: `docker stop -t 30 pi-orca`.
 2. Start a foreground pairing instance. Use the recorded image reference instead of a moving `latest`:
 
    ```sh
-   docker run --rm -it --name pi-orca-pair --hostname pi-orca \
+   docker run --rm -it --log-driver=none --name pi-orca-pair --hostname pi-orca \
      --network ibraproxy --stop-timeout 30 \
      --cap-drop ALL --security-opt no-new-privileges \
      --env-file /mnt/user/appdata/codex-lb-clean/client-secrets/pi-unraid.env \
@@ -128,7 +132,7 @@ Actions are pinned to full commit SHAs; Dependabot tracks their updates. Applica
 
 ### GHCR visibility
 
-A newly published package defaults to private even when its repository is public. In [package settings](https://github.com/users/elmakus/packages/container/pi-orca/settings), change visibility to **Public** and confirm `pi-orca`. Public visibility is irreversible. The image contains no runtime secrets or user HOME. Verify the metadata API reports `public`, then pull both a tag and recorded digest using a fresh empty Docker credential configuration; an authenticated pull is not proof of public availability.
+Do not infer package visibility from repository visibility. Check the package metadata reports `public`. If it is private, use [package settings](https://github.com/users/elmakus/packages/container/pi-orca/settings) to change visibility to **Public** and confirm `pi-orca`; public visibility is irreversible. This deployment's package was observed public. Verify real anonymous pulls by tag and digest using a fresh empty Docker credential configuration. An authenticated pull is not proof of public availability. The image contains no runtime secrets or user HOME.
 
 ### External schedule monitoring
 
@@ -170,3 +174,32 @@ bash scripts/smoke.sh ghcr.io/elmakus/pi-orca:YOUR_VERSION_TAG
 ```
 
 The smoke uses no model key and must not dump Orca pairing output, raw logs, environment or runtime tokens. Physical Linux/Android/Teleport acceptance and real model generation require the deployed server and actual clients; do not infer those results from CI.
+
+## Recorded deployment acceptance (2026-11-04)
+
+The final Unraid container `pi-orca` is running the image from [Actions run 41826316133](https://github.com/elmakus/pi-orca-unraid/actions/runs/41826316133). The continuation check confirmed Docker `healthy`, successful native `orca-ide status`, the expected image/config digest, non-root user, both mounts, LAN-only port and hardening. Installed versions are Pi **1.5.0**, Orca **1.4.248**, Node **26.13.0**, GitHub CLI **2.103.3**, and Debian **13.7 (trixie)**.
+
+Completed during deployment:
+
+- **Resolver:** 25 deterministic boundary tests passed, along with live upstream resolution and an unchanged-input no-op poll. Daily date changes were covered by tests, not by waiting for a later day.
+- **Runtime:** real hardened smoke passed locally, in Actions before publication, and after pulling from GHCR on Unraid. It exercised fresh writable binds, tools/venv, core PATH precedence, positive/negative native health, PTY, managed Pi/RPC without generation, and graceful stop with a live child without SIGKILL.
+- **Publication:** anonymous tag/digest pulls succeeded. Published config digests matched the tested image IDs. [Run 41824595067](https://github.com/elmakus/pi-orca-unraid/actions/runs/41824595067) deliberately failed after publishing B but before promotion, leaving A as `latest`. The [older run's second attempt](https://github.com/elmakus/pi-orca-unraid/actions/runs/41823713764/attempts/2) refused to replace the newer final `latest`.
+- **Model:** two minimal real prompts on the new service verified `codex_lb/gpt-6.1-sol`, `openai-responses`, medium effort, streamed text, a bash tool call/result followed by the final answer, and saved-history resume after image replacement. Orca's managed Pi session separately reported the same model and medium effort.
+- **Persistence:** A → B → A preserved history/settings, Orca identity keys and a pinned test package. A stopped-service full-HOME backup was restored to a separate directory and read in an isolated offline container. The test package was removed from the final HOME; private backups and the sandbox/session evidence remain.
+- **Unraid:** the template and DockerMan management label are installed, and the separate Autostart entry is enabled. Existing autostart entries were preserved. Container updates remain manual. `pinkcollab-omp` stayed healthy with its original ID, image and start time; no OMP or Home Assistant configuration was changed.
+
+The following retained tags belong to `ghcr.io/elmakus/pi-orca`. Use the registry digest, not a moving tag, for an immutable reference:
+
+| Role | Version tag | Registry digest |
+| --- | --- | --- |
+| A: rollback baseline | `pi-1.5.0-orca-1.4.248-rev-8d3e6632-20261104-41824240633-1` | `sha256:857f9202c5760fc2f85953ba9d62f717ae428db9065e322d9e330526e5eb301c` |
+| B: deliberate pre-promotion failure | `pi-1.5.0-orca-1.4.248-rev-8d3e6632-20261104-41824595067-1` | `sha256:90ca65e76dd0857a7eb9b389bd755677878d525ecbe2f9d3374b5a9df732f0ac` |
+| Final deployed `latest` | `pi-1.5.0-orca-1.4.248-rev-8d3e6632-20261104-41826316133-1` | `sha256:0a2533023856e6f3ce7c3eda636a3d0a2564d5420e15cc2e57b494f0dbf116fe` |
+
+### Remaining acceptance limits
+
+- **Real clients:** no physical Orca Linux or Android client was available or paired. Real device grants, LAN/Teleport reconnect and client-side Pi use remain unverified. Private sequential runtime/mobile/no-pairing bootstrap did pass and retained the server identity; this does not prove client acceptance.
+- **Reasoning:** neither model probe emitted `thinking_delta`. Medium effort and text/tool transport passed, but visible reasoning-summary streaming is not verified.
+- **Rollback:** A and B are different published registry/config digests with the **same Pi/Orca versions**. This proves image replacement and data persistence, not migration between application versions or compatibility with future Orca schema changes.
+- **Monitoring:** the workflow is active, but external monitoring is **not active**: `HEALTHCHECKS_POLL_URL` and `HEALTHCHECKS_DAILY_URL` are absent. Create both external checks, add their private ping URLs as Actions secrets, and confirm delivery of a test alert as described above. Future scheduled/daily runs and GitHub's inactivity-disable behavior were not observed.
+- **Unraid UI/restart:** DockerMan label/template and enabled Autostart were verified, but no logged-in Unraid browser was available to exercise **Docker → Check for Updates → Update**. No update was triggered just for that test, and no host/array restart was performed.
