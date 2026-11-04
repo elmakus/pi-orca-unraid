@@ -41,13 +41,14 @@ RUN test -n "$PI_VERSION" && test -n "$GH_VERSION" \
     && curl -fsSL --retry 3 --connect-timeout 20 "$PI_URL" -o /tmp/pi.tar.gz \
     && printf '%s  /tmp/pi.tar.gz\n' "$PI_SHA256" | sha256sum -c - \
     && mkdir -p /opt/pi \
-    && tar -xzf /tmp/pi.tar.gz -C /opt/pi --strip-components=1 \
+    && tar --no-same-owner -xzf /tmp/pi.tar.gz -C /opt/pi --strip-components=1 \
     && ln -s /opt/pi/pi /usr/local/bin/pi \
     && curl -fsSL --retry 3 --connect-timeout 20 "$GH_URL" -o /tmp/gh.tar.gz \
     && printf '%s  /tmp/gh.tar.gz\n' "$GH_SHA256" | sha256sum -c - \
     && mkdir -p /opt/gh \
-    && tar -xzf /tmp/gh.tar.gz -C /opt/gh --strip-components=1 \
+    && tar --no-same-owner -xzf /tmp/gh.tar.gz -C /opt/gh --strip-components=1 \
     && ln -s /opt/gh/bin/gh /usr/local/bin/gh \
+    && chmod -R a+rX,go-w /opt/pi /opt/gh \
     && rm /tmp/pi.tar.gz /tmp/gh.tar.gz
 
 RUN usermod -l agent -d /home/agent -m node \
@@ -65,6 +66,7 @@ LABEL org.opencontainers.image.source="https://github.com/elmakus/pi-orca-unraid
       org.opencontainers.image.version="pi-${PI_VERSION}-orca-${ORCA_VERSION}" \
       io.github.pi-orca.fingerprint="$FINGERPRINT" \
       io.github.pi-orca.run-number="$RUN_NUMBER"
+RUN mkdir -p /usr/local/share/pi-orca && chmod 0755 /usr/local/share/pi-orca
 COPY --chmod=644 build/resolved.json /usr/local/share/pi-orca/build.json
 COPY --chmod=755 entrypoint.sh /usr/local/bin/start-pi-orca
 ENV HOME=/home/agent \
