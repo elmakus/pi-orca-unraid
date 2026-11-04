@@ -1,0 +1,177 @@
+name: Publish tested Pi + Orca
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - Dockerfile
+      - entrypoint.sh
+      - .dockerignore
+      - scripts/**
+      - tests/**
+      - .github/workflows/publish.yml
+  workflow_dispatch:
+    inputs:
+      fail_before_promotion:
+        description: Test failure isolation after publishing the tested version tag, before changing latest
+        type: boolean
+        default: false
+  schedule:
+    - cron: '17 */6 * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pi-orca-ghcr-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/elmakus/pi-orca
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test resolver boundaries
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Resolve immutable build inputs
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/resolve.py --output build/resolved.json --github-output "$GITHUB_OUTPUT"
+
+      - name: Build once
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          for key in base_image pi_version pi_url pi_sha256 orca_version orca_url orca_sha256 gh_version gh_url gh_sha256 utc_date revision created fingerprint run_number; do
+            value=$(jq -er --arg key "$key" '.[$key] | tostring' build/resolved.json)
+            args+=(--build-arg "${key^^}=$value")
+          done
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then args+=(--no-cache); fi
+          docker buildx build --platform linux/amd64 --pull --load --provenance=false "${args[@]}" -t "$IMAGE:$TAG" .
+          docker image inspect --format '{{.Id}}' "$IMAGE:$TAG" > build/tested-image-id.txt
+
+      - name: Exercise hardened runtime without a model
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          bash scripts/smoke.sh "$IMAGE:$TAG"
+          docker run --rm --cap-drop=ALL --security-opt=no-new-privileges --entrypoint dpkg-query "$IMAGE:$TAG" -W > build/packages.txt
+
+      - name: Publish the tested image and promote safely
+        id: publish
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.resolve.outputs.tag }}
+          FAIL_BEFORE_PROMOTION: ${{ inputs.fail_before_promotion || false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/resolve.py registry --reference "$IMAGE:$TAG" > build/tag-before.json
+          jq -e '.exists == false' build/tag-before.json > /dev/null
+          printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker push "$IMAGE:$TAG"
+          python3 scripts/resolve.py registry --reference "$IMAGE:$TAG" > build/publication.json
+          test "$(jq -er .config_digest build/publication.json)" = "$(cat build/tested-image-id.txt)"
+          jq -er '.digest' build/publication.json
+          if [[ "$FAIL_BEFORE_PROMOTION" == true ]]; then
+            echo 'Deliberate failure: tested version published, latest not touched.'
+            exit 1
+          fi
+          python3 scripts/resolve.py registry --reference "$IMAGE:latest" > build/latest-before.json
+          previous=0
+          if jq -e '.exists' build/latest-before.json > /dev/null; then
+            previous=$(jq -er '.labels["io.github.pi-orca.run-number"]' build/latest-before.json)
+            [[ "$previous" =~ ^[0-9]+$ ]]
+          fi
+          if (( previous > GITHUB_RUN_NUMBER )); then
+            echo 'A newer run already owns latest; this older run will not promote.'
+            echo 'promoted=false' >> "$GITHUB_OUTPUT"
+          else
+            docker tag "$IMAGE:$TAG" "$IMAGE:latest"
+            docker push "$IMAGE:latest"
+            python3 scripts/resolve.py registry --reference "$IMAGE:latest" > build/latest-after.json
+            test "$(jq -er .digest build/latest-after.json)" = "$(jq -er .digest build/publication.json)"
+            echo 'promoted=true' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Record result
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SKIP: ${{ steps.resolve.outputs.skip }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/resolve.py registry --reference "$IMAGE:latest" > build/latest.json
+          {
+            echo '## Pi + Orca publication'
+            echo
+            echo "No-op: $SKIP"
+            echo 'Resolved inputs:'
+            jq '{pi_version,orca_version,node_version,gh_version,debian_codename,base_digest,utc_date,fingerprint,revision,tag}' build/resolved.json
+            echo 'Current latest:'
+            jq '{exists,digest,config_digest}' build/latest.json
+            echo 'Unraid deployment is manual; this workflow never accesses Unraid.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Send successful check and daily-refresh heartbeats
+        env:
+          POLL_URL: ${{ secrets.HEALTHCHECKS_POLL_URL }}
+          DAILY_URL: ${{ secrets.HEALTHCHECKS_DAILY_URL }}
+          REFRESHED: ${{ steps.publish.outputs.promoted }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$POLL_URL" ]]; then
+            curl --fail --silent --retry 2 --max-time 20 --output /dev/null "$POLL_URL" || { echo 'Poll heartbeat failed'; exit 1; }
+          else
+            echo '::warning::External poll monitor is not connected: HEALTHCHECKS_POLL_URL is missing.'
+            echo 'External poll monitor: NOT CONNECTED.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [[ -z "$DAILY_URL" ]]; then
+            echo '::warning::External daily refresh monitor is not connected: HEALTHCHECKS_DAILY_URL is missing.'
+            echo 'External daily refresh monitor: NOT CONNECTED.' >> "$GITHUB_STEP_SUMMARY"
+          elif [[ "$REFRESHED" == true ]]; then
+            curl --fail --silent --retry 2 --max-time 20 --output /dev/null "$DAILY_URL" || { echo 'Daily refresh heartbeat failed'; exit 1; }
+          fi
+
+      - name: Signal check failure
+        if: failure()
+        env:
+          POLL_URL: ${{ secrets.HEALTHCHECKS_POLL_URL }}
+          DAILY_URL: ${{ secrets.HEALTHCHECKS_DAILY_URL }}
+          SKIP: ${{ steps.resolve.outputs.skip }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "$POLL_URL" ]]; then curl --fail --silent --retry 2 --max-time 20 --output /dev/null "${POLL_URL%/}/fail" || echo 'Failure heartbeat delivery failed'; fi
+          if [[ -n "$DAILY_URL" && "$SKIP" != true ]]; then curl --fail --silent --retry 2 --max-time 20 --output /dev/null "${DAILY_URL%/}/fail" || echo 'Daily failure heartbeat delivery failed'; fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: build-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/resolved.json
+            build/packages.txt
+            build/tested-image-id.txt
+            build/publication.json
+            build/latest*.json
+          if-no-files-found: ignore
+          retention-days: 90

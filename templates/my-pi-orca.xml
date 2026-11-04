@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>pi-orca</Name>
+  <Repository>ghcr.io/elmakus/pi-orca:latest</Repository>
+  <Registry>https://ghcr.io/elmakus/pi-orca</Registry>
+  <Network>ibraproxy</Network>
+  <Privileged>false</Privileged>
+  <Console>Shell</Console>
+  <Shell>bash</Shell>
+  <Project>https://github.com/elmakus/pi-orca-unraid</Project>
+  <Overview>Official Pi with standard Orca integration. Full access inside an unprivileged container. Persistent HOME and shared workspace. Image updates are automatic; container updates are manual.</Overview>
+  <Category>Tools:</Category>
+  <ExtraParams>--hostname=pi-orca --cap-drop=ALL --security-opt=no-new-privileges --restart=unless-stopped --stop-timeout=30 --env-file=/mnt/user/appdata/codex-lb-clean/client-secrets/pi-unraid.env -p 192.168.2.104:6769:6769/tcp</ExtraParams>
+  <PostArgs>--no-pairing</PostArgs>
+  <Config Name="Persistent HOME" Target="/home/agent" Default="/mnt/user/appdata/pi-orca" Mode="rw" Description="Whole HOME, owned by UID/GID 1000. Includes Pi sessions, Orca device keys and user packages." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/pi-orca</Config>
+  <Config Name="Shared workspace" Target="/workspace" Default="/mnt/cachedl/omp-workspace" Mode="rw" Description="Existing shared workspace. Never recursively chown this directory." Type="Path" Display="always" Required="true" Mask="false">/mnt/cachedl/omp-workspace</Config>
+  <Config Name="Pairing LAN address" Target="ORCA_PAIRING_ADDRESS" Default="192.168.2.104" Description="LAN address advertised during foreground pairing. Not a public Internet endpoint." Type="Variable" Display="always" Required="true" Mask="false">192.168.2.104</Config>
+</Container>
