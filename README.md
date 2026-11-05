@@ -141,6 +141,11 @@ bundle at `/opt/pi-patched/dist/bundle/cli.js`.
 
 ### Safe interrupted-turn continuation
 
+A separately tested `guard-committed-output.py` build patch prevents Pi from
+automatically replaying already committed text, images or tool calls.
+Thinking-only failures retain ordinary retry. The patch is intentionally
+conservative: a tool call without a recorded result will not be retried.
+
 The independently packaged `/opt/pi-orca-extensions/stream-stall-recovery.mjs`
 extension uses the native `agent_before_settle` event, not a fork of Pi's
 internal agent loop. It can continue a failed reply containing previously
@@ -148,7 +153,7 @@ emitted text or a reply whose **every** tool call has a matching recorded tool
 result, and never blindly reexecutes an uncertain tool call. It triggers only
 for recognized transient transport failures with no pending input and has a
 strict maximum of three attempts per original user prompt. If all retries fail,
-Pi stops normally and preserves the session. Its 18 safety regression tests and two isolated, real-Pi stream-recovery tests
+Pi stops normally and preserves the session. Its 18 safety regression tests and three isolated, real-Pi stream-recovery tests
 run in CI. Enable in persistent `settings.json` using the exact absolute path
 `/opt/pi-orca-extensions/stream-stall-recovery.mjs` in `extensions`. The source
 updates with the image; the user configuration survives image updates.

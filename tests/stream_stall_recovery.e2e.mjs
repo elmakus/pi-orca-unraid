@@ -10,7 +10,7 @@ const extension = '/opt/pi-orca-extensions/stream-stall-recovery.mjs';
 const waitForServer = server => new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const send = (res, event) => res.write(`data: ${JSON.stringify(event)}\n\n`);
 
-async function testCase(withExtension) {
+async function testCase(withExtension, agentRetries = 0) {
   let attempts = 0;
   const requests = [];
   const server = http.createServer(async (req, res) => {
@@ -41,7 +41,7 @@ async function testCase(withExtension) {
     } } }));
     fs.writeFileSync(path.join(configDir, 'settings.json'), JSON.stringify({
       defaultProvider: 'mock', defaultModel: 'mock', defaultThinkingLevel: 'off',
-      retry: { enabled: true, maxRetries: 0, baseDelayMs: 500, maxAgentDelayMs: 60000 },
+      retry: { enabled: true, maxRetries: agentRetries, baseDelayMs: 500, maxAgentDelayMs: 60000 },
       extensions: withExtension ? [extension] : [],
     }));
     const output = await new Promise((resolve, reject) => {
@@ -72,3 +72,4 @@ async function testCase(withExtension) {
 
 test('baseline Pi stops on interrupted response', () => testCase(false));
 test('stream recovery resumes with complete partial text context', () => testCase(true));
+test('committed output bypasses generic agent retries and uses guarded continuation', () => testCase(true, 3));

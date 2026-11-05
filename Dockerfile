@@ -22,6 +22,7 @@ FROM os AS patched_pi
 ARG PI_VERSION
 ARG PATCH_COMMIT
 COPY --chmod=644 scripts/apply-lkraider.py /tmp/apply-lkraider.py
+COPY --chmod=644 scripts/guard-committed-output.py /tmp/guard-committed-output.py
 RUN test -n "$PI_VERSION" && test -n "$PATCH_COMMIT" \
     && mkdir -p /opt/pi-patched /tmp/pi-lkraider \
     && cd /tmp \
@@ -30,6 +31,7 @@ RUN test -n "$PI_VERSION" && test -n "$PATCH_COMMIT" \
     && node -e 'const fs=require("node:fs");const p="/opt/pi-patched/package.json";const j=JSON.parse(fs.readFileSync(p));delete j.devDependencies;delete j.scripts;fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n")' \
     && npm install --prefix /opt/pi-patched --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error \
     && npm install --prefix /opt/pi-patched --no-save --ignore-scripts --no-audit --no-fund esbuild@0.25.12 --loglevel=error \
+    && python3 /tmp/guard-committed-output.py --package /opt/pi-patched \
     && git -C /tmp/pi-lkraider init -q \
     && git -C /tmp/pi-lkraider fetch -q --depth=1 https://github.com/lkraider/pi-codex-lb-patches.git "$PATCH_COMMIT" \
     && test "$(git -C /tmp/pi-lkraider rev-parse FETCH_HEAD)" = "$PATCH_COMMIT" \
