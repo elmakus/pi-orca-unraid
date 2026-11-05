@@ -5,3 +5,5 @@
 !build/resolved.json
 !scripts/
 !scripts/apply-lkraider.py
+!extensions/
+!extensions/stream-stall-recovery.mjs

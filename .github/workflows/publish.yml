@@ -9,6 +9,7 @@ on:
       - .dockerignore
       - scripts/**
       - tests/**
+      - extensions/**
       - .github/workflows/publish.yml
   workflow_dispatch:
     inputs:
@@ -43,6 +44,9 @@ jobs:
       - name: Test resolver boundaries
         run: python3 -m unittest discover -s tests -v
 
+      - name: Test conservative stream recovery
+        run: node --test tests/stream_stall_recovery.test.mjs
+
       - name: Resolve immutable build inputs
         id: resolve
         env:
@@ -72,6 +76,15 @@ jobs:
         run: |
           bash scripts/smoke.sh "$IMAGE:$TAG"
           docker run --rm --cap-drop=ALL --security-opt=no-new-privileges --entrypoint dpkg-query "$IMAGE:$TAG" -W > build/packages.txt
+
+      - name: Test stream interruption recovery against isolated local API
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --mount type=bind,src="$PWD/tests/stream_stall_recovery.e2e.mjs",dst=/test.mjs,readonly \
+            --entrypoint node "$IMAGE:$TAG" --test /test.mjs
 
       - name: Publish the tested image and promote safely
         id: publish

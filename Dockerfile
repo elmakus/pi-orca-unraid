@@ -77,6 +77,7 @@ RUN test -n "$PI_VERSION" && test -n "$GH_VERSION" \
 # Keep original official Pi standalone at /opt/pi/pi for rollback.
 # The patched npm bundle becomes the default Pi used by Orca and CLI.
 COPY --from=patched_pi /opt/pi-patched /opt/pi-patched
+COPY --chmod=644 extensions/stream-stall-recovery.mjs /opt/pi-orca-extensions/stream-stall-recovery.mjs
 RUN test -x /opt/pi-patched/dist/bundle/cli.js \
     && rm /usr/local/bin/pi \
     && ln -s /opt/pi-patched/dist/bundle/cli.js /usr/local/bin/pi
