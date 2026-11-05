@@ -99,7 +99,7 @@ Create `/home/agent/.pi/agent/models.json` in the container (host path `/mnt/use
 }
 ```
 
-`${CODEX_LB_API_KEY}` is environment interpolation. A bare `CODEX_LB_API_KEY` string is a literal key. Use `openai-responses`, not `openai-codex-responses`. If Orca selects another agent directory, configure that directory's native Pi file too, without copying credentials into it.
+`${CODEX_LB_API_KEY}` is environment interpolation. A bare `CODEX_LB_API_KEY` string is a literal key. For the HTTP fallback use `openai-responses`; the patched native WebSocket provider uses `openai-codex-responses` on `/backend-api`. If Orca selects another agent directory, configure that directory's native Pi file too, without copying credentials into it.
 
 Start with only `codex_lb/gpt-6.1-sol` and medium reasoning. Verify actual streaming generation, a tool call and tool result followed by another answer, and history resume. `/v1/models` alone does not verify compatibility. `reasoning: true` is a client declaration, not proof of provider capabilities. Do not invent prices/context limits or set compatibility workarounds without a demonstrated incompatibility. Generative tests belong on Unraid, never in CI. Add other LB models only after this model passes.
 
@@ -108,6 +108,36 @@ Start with only `codex_lb/gpt-6.1-sol` and medium reasoning. Verify actual strea
 Core Pi, Orca and GitHub CLI are root-owned outside HOME. The image puts core paths before HOME tools to avoid accidentally shadowing those commands. npm's prefix is `~/.local/npm`; user binaries remain on PATH. Use Python's `python3 -m venv …`, then that environment's pip.
 
 Use native `pi install`, `pi list`, and `pi update --extensions` for optional Pi packages. Do not update core Pi from the entrypoint. User packages, venvs and tools persist in HOME, but native modules or venvs can need repair after a Node/Python/Debian ABI change. Persistence is not a promise of unlimited binary compatibility.
+
+## Native Codex WebSocket and automatic patch updates
+
+The built-in `codex_lb` provider may use `openai-codex-responses` with
+`baseUrl: "http://codex-lb-clean:2455/backend-api"`, because the Pi native
+Codex provider appends `/codex/responses`. A `codex_lb_http` provider retains
+`openai-responses` on `http://codex-lb-clean:2455/v1` for rollback.
+Both use the same `CODEX_LB_API_KEY` interpolation, never an embedded secret.
+Set `transport: "websocket"` to prefer the native WebSocket lane.
+
+On **every scheduled or manual CI run**, the resolver reads the current
+`lkraider/pi-codex-lb-patches` default-branch commit. That SHA participates in
+the image fingerprint; any upstream patch change triggers a new build, even
+if Pi/Orca releases did not change. The *resolved* SHA is checked out for the
+individual build to avoid a moving-target race, but is not pinned between runs.
+The build applies the three upstream patches (`bearer-auth`, `transient-retry`,
+`owner-migration`), rebases only the known Pi 1.5 identity-header difference,
+rebuilds Pi with esbuild, and runs the upstream provider and bundled-code tests.
+A newly incompatible upstream patch or Pi source **fails the build** and never
+promotes `latest`. Do not silently skip a patch or publish an untested image.
+
+This is upstream code automatically downloaded and executed during the build;
+it entails supply-chain risk. Pin a revision instead if source integrity or
+review before deployment becomes a higher priority.
+
+Full HOME, including sessions and saved Orca pairing, stays in the existing
+persistent bind mount; rebuilds never replace it. Images only update after
+Unraid's explicit container update. The original official Pi binary remains
+available at `/opt/pi/pi`, while the default `pi` points to the tested npm
+bundle at `/opt/pi-patched/dist/bundle/cli.js`.
 
 ## Build, test and publication
 

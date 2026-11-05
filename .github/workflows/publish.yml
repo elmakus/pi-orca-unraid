@@ -57,7 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           args=()
-          for key in base_image pi_version pi_url pi_sha256 orca_version orca_url orca_sha256 gh_version gh_url gh_sha256 utc_date revision created fingerprint run_number; do
+          for key in base_image pi_version pi_url pi_sha256 orca_version orca_url orca_sha256 gh_version gh_url gh_sha256 patch_commit utc_date revision created fingerprint run_number; do
             value=$(jq -er --arg key "$key" '.[$key] | tostring' build/resolved.json)
             args+=(--build-arg "${key^^}=$value")
           done

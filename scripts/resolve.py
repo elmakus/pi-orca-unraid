@@ -302,6 +302,15 @@ def registry_inspect(reference):
     return Registry(host, repository).inspect(ref)
 
 
+def latest_patch_commit():
+    """Resolve moving upstream patch main to a per-build immutable commit."""
+    data = get_json("https://api.github.com/repos/lkraider/pi-codex-lb-patches/commits/main")
+    sha = data.get("sha") if isinstance(data, dict) else None
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", sha):
+        raise ResolveError("Upstream Pi patch main did not resolve to a full commit SHA")
+    return sha.lower()
+
+
 def build_file_hashes(root):
     paths = [root / "Dockerfile", root / "entrypoint.sh", root / ".dockerignore"]
     paths += list((root / "scripts").rglob("*")) + list((root / ".github/workflows").glob("*"))
@@ -328,7 +337,7 @@ def resolve(root=ROOT):
     if not re.fullmatch(r"[0-9a-fA-F]{40,64}", revision):
         raise ResolveError("Expected full source revision")
     now = dt.datetime.now(dt.timezone.utc)
-    inputs.update(node_version=node, debian_codename=debian, base_image=base + "@" + base_info["digest"], base_digest=base_info["digest"], platform=PLATFORM, revision=revision, utc_date=now.date().isoformat())
+    inputs.update(node_version=node, debian_codename=debian, base_image=base + "@" + base_info["digest"], base_digest=base_info["digest"], platform=PLATFORM, revision=revision, utc_date=now.date().isoformat(), patch_commit=latest_patch_commit())
     inputs["fingerprint"] = fingerprint(inputs, build_file_hashes(root))
     run_id = os.getenv("GITHUB_RUN_ID") or uuid.uuid4().hex
     attempt = os.getenv("GITHUB_RUN_ATTEMPT", "1")

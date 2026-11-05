@@ -16,6 +16,28 @@ RUN test -n "$UTC_DATE" \
     && ln -s /usr/bin/fdfind /usr/local/bin/fd \
     && rm -rf /var/lib/apt/lists/*
 
+# Rebuild native Pi provider against the latest validated upstream patch revision.
+# A changed patch/main SHA is resolved into the build fingerprint on every CI run.
+FROM os AS patched_pi
+ARG PI_VERSION
+ARG PATCH_COMMIT
+COPY --chmod=644 scripts/apply-lkraider.py /tmp/apply-lkraider.py
+RUN test -n "$PI_VERSION" && test -n "$PATCH_COMMIT" \
+    && mkdir -p /opt/pi-patched /tmp/pi-lkraider \
+    && cd /tmp \
+    && npm pack --silent "@earendil-works/pi-coding-agent@$PI_VERSION" --pack-destination /tmp > /tmp/pi-package-name \
+    && tar -xzf "/tmp/$(cat /tmp/pi-package-name)" -C /opt/pi-patched --strip-components=1 \
+    && node -e 'const fs=require("node:fs");const p="/opt/pi-patched/package.json";const j=JSON.parse(fs.readFileSync(p));delete j.devDependencies;delete j.scripts;fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n")' \
+    && npm install --prefix /opt/pi-patched --omit=dev --ignore-scripts --no-audit --no-fund --loglevel=error \
+    && npm install --prefix /opt/pi-patched --no-save --ignore-scripts --no-audit --no-fund esbuild@0.25.12 --loglevel=error \
+    && git -C /tmp/pi-lkraider init -q \
+    && git -C /tmp/pi-lkraider fetch -q --depth=1 https://github.com/lkraider/pi-codex-lb-patches.git "$PATCH_COMMIT" \
+    && test "$(git -C /tmp/pi-lkraider rev-parse FETCH_HEAD)" = "$PATCH_COMMIT" \
+    && git -C /tmp/pi-lkraider checkout -q --detach FETCH_HEAD \
+    && python3 /tmp/apply-lkraider.py --package /opt/pi-patched --patches /tmp/pi-lkraider --version "$PI_VERSION" \
+    && chmod -R a+rX,go-w /opt/pi-patched \
+    && rm -rf /tmp/pi-lkraider /tmp/pi-package-name /tmp/*.tgz
+
 FROM os AS runtime
 ARG PI_VERSION
 ARG PI_URL
@@ -26,6 +48,7 @@ ARG ORCA_SHA256
 ARG GH_VERSION
 ARG GH_URL
 ARG GH_SHA256
+ARG PATCH_COMMIT
 
 # Satisfy the official package's actual dependencies before extracting its full payload.
 RUN test -n "$ORCA_VERSION" \
@@ -51,6 +74,13 @@ RUN test -n "$PI_VERSION" && test -n "$GH_VERSION" \
     && chmod -R a+rX,go-w /opt/pi /opt/gh \
     && rm /tmp/pi.tar.gz /tmp/gh.tar.gz
 
+# Keep original official Pi standalone at /opt/pi/pi for rollback.
+# The patched npm bundle becomes the default Pi used by Orca and CLI.
+COPY --from=patched_pi /opt/pi-patched /opt/pi-patched
+RUN test -x /opt/pi-patched/dist/bundle/cli.js \
+    && rm /usr/local/bin/pi \
+    && ln -s /opt/pi-patched/dist/bundle/cli.js /usr/local/bin/pi
+
 RUN usermod -l agent -d /home/agent -m node \
     && groupmod -n agent node \
     && mkdir -p /workspace \
@@ -65,12 +95,13 @@ LABEL org.opencontainers.image.source="https://github.com/elmakus/pi-orca-unraid
       org.opencontainers.image.created="$CREATED" \
       org.opencontainers.image.version="pi-${PI_VERSION}-orca-${ORCA_VERSION}" \
       io.github.pi-orca.fingerprint="$FINGERPRINT" \
-      io.github.pi-orca.run-number="$RUN_NUMBER"
+      io.github.pi-orca.run-number="$RUN_NUMBER" \
+      io.github.pi-orca.patches-commit="$PATCH_COMMIT"
 RUN mkdir -p /usr/local/share/pi-orca && chmod 0755 /usr/local/share/pi-orca
 COPY --chmod=644 build/resolved.json /usr/local/share/pi-orca/build.json
 COPY --chmod=755 entrypoint.sh /usr/local/bin/start-pi-orca
 ENV HOME=/home/agent \
-    PI_PACKAGE_DIR=/opt/pi \
+    PI_PACKAGE_DIR=/opt/pi-patched \
     NPM_CONFIG_PREFIX=/home/agent/.local/npm \
     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/home/agent/.local/npm/bin \
     ORCA_PORT=6769 \

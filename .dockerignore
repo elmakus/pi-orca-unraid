@@ -3,3 +3,5 @@
 !entrypoint.sh
 !build/
 !build/resolved.json
+!scripts/
+!scripts/apply-lkraider.py

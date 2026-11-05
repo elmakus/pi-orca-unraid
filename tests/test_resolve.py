@@ -168,7 +168,7 @@ class InterfaceTests(unittest.TestCase):
 
     def resolve_with(self, attempt="1", collision=False):
         env = {"GITHUB_SHA": "e" * 40, "GITHUB_RUN_ID": "12345", "GITHUB_RUN_ATTEMPT": attempt, "GITHUB_RUN_NUMBER": "77", "GITHUB_EVENT_NAME": "workflow_dispatch"}
-        with patch.dict(os.environ, env), patch.object(r.dt, "datetime", FixedDatetime), patch.object(r, "application_inputs", return_value=self.apps.copy()), patch.object(r, "get_json", return_value=[]), patch.object(r, "fetch", return_value=(b"", {})), patch.object(r, "node_variant", return_value=("26.13.0", "trixie", "node:26.13.0-trixie-slim")), patch.object(r, "build_file_hashes", return_value={"Dockerfile": "hash"}), patch.object(r, "registry_inspect", side_effect=[self.base, self.missing, {**self.missing, "exists": collision}]):
+        with patch.dict(os.environ, env), patch.object(r.dt, "datetime", FixedDatetime), patch.object(r, "application_inputs", return_value=self.apps.copy()), patch.object(r, "get_json", return_value=[]), patch.object(r, "fetch", return_value=(b"", {})), patch.object(r, "node_variant", return_value=("26.13.0", "trixie", "node:26.13.0-trixie-slim")), patch.object(r, "latest_patch_commit", return_value="f" * 40), patch.object(r, "build_file_hashes", return_value={"Dockerfile": "hash"}), patch.object(r, "registry_inspect", side_effect=[self.base, self.missing, {**self.missing, "exists": collision}]):
             return r.resolve()
 
     def test_full_manifest_and_rerun_identity(self):
@@ -182,6 +182,7 @@ class InterfaceTests(unittest.TestCase):
         self.assertEqual(first["run_number"], "77")
         self.assertEqual(first["base_image"], "node:26.13.0-trixie-slim@" + self.base["digest"])
         self.assertEqual(first["platform"], "linux/amd64")
+        self.assertEqual(first["patch_commit"], "f" * 40)
         self.assertTrue(first["created"].endswith("Z"))
 
     def test_existing_version_tag_is_never_reused(self):
