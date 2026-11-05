@@ -115,7 +115,8 @@ def main(image):
             test "$(id -u)" = 1000 && test "$(id -g)" = 1000
             test "$HOME" = /home/agent && test "$(pwd)" = /workspace
             touch /home/agent/.write-test /workspace/.write-test
-            for tool in npm python3 git ssh gh rg fd jq curl wget dumb-init; do command -v "$tool" >/dev/null; done
+            for tool in npm python3 git ssh gh rg fd jq curl wget dumb-init ketch agent-browser; do command -v "$tool" >/dev/null; done
+            test -x /usr/local/bin/pi-orca-chrome
             python3 -m venv /home/agent/smoke-venv
             /home/agent/smoke-venv/bin/python -m pip --version >/dev/null
             mkdir -p "$HOME/.local/bin" "$NPM_CONFIG_PREFIX/bin"

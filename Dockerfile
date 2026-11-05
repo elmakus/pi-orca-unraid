@@ -84,6 +84,18 @@ RUN test -x /opt/pi-patched/dist/bundle/cli.js \
     && rm /usr/local/bin/pi \
     && ln -s /opt/pi-patched/dist/bundle/cli.js /usr/local/bin/pi
 
+# Current Ketch and Agent Browser CLI releases are resolved at build time.
+# Install outside /home/agent: it is replaced by an Unraid bind mount at runtime.
+RUN NPM_CONFIG_PREFIX=/usr/local npm install -g --no-audit --no-fund ketch-cli@latest agent-browser@latest \
+    && ketch --version && agent-browser --version
+RUN mkdir -p /opt/pi-orca-browser \
+    && HOME=/opt/pi-orca-browser agent-browser install --with-deps \
+    && CHROME="$(find /opt/pi-orca-browser/.agent-browser/browsers -type f -name chrome -print -quit)" \
+    && test -n "$CHROME" && test -x "$CHROME" \
+    && ln -s "$CHROME" /usr/local/bin/pi-orca-chrome \
+    && chmod -R a+rX /opt/pi-orca-browser
+ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/pi-orca-chrome
+
 RUN usermod -l agent -d /home/agent -m node \
     && groupmod -n agent node \
     && mkdir -p /workspace \
