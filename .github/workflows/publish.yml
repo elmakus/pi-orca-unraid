@@ -42,9 +42,11 @@ jobs:
           persist-credentials: false
 
       - name: Test resolver boundaries
+        id: test_resolver
         run: python3 -m unittest discover -s tests -v
 
       - name: Test conservative stream recovery
+        id: test_stream
         run: node --test tests/stream_stall_recovery.test.mjs
 
       - name: Resolve immutable build inputs
@@ -54,6 +56,7 @@ jobs:
         run: python3 scripts/resolve.py --output build/resolved.json --github-output "$GITHUB_OUTPUT"
 
       - name: Build once
+        id: build_image
         if: steps.resolve.outputs.skip != 'true'
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
@@ -70,14 +73,23 @@ jobs:
           docker image inspect --format '{{.Id}}' "$IMAGE:$TAG" > build/tested-image-id.txt
 
       - name: Exercise hardened runtime without a model
+        id: smoke
         if: steps.resolve.outputs.skip != 'true'
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
-          bash scripts/smoke.sh "$IMAGE:$TAG"
+          bash scripts/smoke.sh "$IMAGE:$TAG" --diagnostic-file build/smoke-diagnostic.json
+
+      - name: Inventory installed Debian packages
+        id: packages
+        if: steps.resolve.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
           docker run --rm --cap-drop=ALL --security-opt=no-new-privileges --entrypoint dpkg-query "$IMAGE:$TAG" -W > build/packages.txt
 
       - name: Test stream interruption recovery against isolated local API
+        id: e2e_stream
         if: steps.resolve.outputs.skip != 'true'
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
@@ -125,6 +137,7 @@ jobs:
           fi
 
       - name: Record result
+        id: record
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SKIP: ${{ steps.resolve.outputs.skip }}
@@ -144,6 +157,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Send successful check and daily-refresh heartbeats
+        id: heartbeat
         env:
           POLL_URL: ${{ secrets.HEALTHCHECKS_POLL_URL }}
           DAILY_URL: ${{ secrets.HEALTHCHECKS_DAILY_URL }}
@@ -163,6 +177,22 @@ jobs:
           elif [[ "$REFRESHED" == true ]]; then
             curl --fail --silent --retry 2 --max-time 20 --output /dev/null "$DAILY_URL" || { echo 'Daily refresh heartbeat failed'; exit 1; }
           fi
+
+      - name: Explain failed build or test
+        if: failure()
+        env:
+          RESOLVER_TEST: ${{ steps.test_resolver.outcome }}
+          STREAM_UNIT_TEST: ${{ steps.test_stream.outcome }}
+          INPUT_RESOLUTION: ${{ steps.resolve.outcome }}
+          DOCKER_BUILD: ${{ steps.build_image.outcome }}
+          RUNTIME_SMOKE: ${{ steps.smoke.outcome }}
+          DEBIAN_INVENTORY: ${{ steps.packages.outcome }}
+          STREAM_E2E: ${{ steps.e2e_stream.outcome }}
+          PACKAGE_PROMOTION: ${{ steps.publish.outcome }}
+          RESULT_RECORD: ${{ steps.record.outcome }}
+          HEARTBEAT: ${{ steps.heartbeat.outcome }}
+        run: |
+          python3 scripts/ci-failure-summary.py build/smoke-diagnostic.json
 
       - name: Signal check failure
         if: failure()
@@ -186,5 +216,6 @@ jobs:
             build/tested-image-id.txt
             build/publication.json
             build/latest*.json
+            build/smoke-diagnostic.json
           if-no-files-found: ignore
           retention-days: 90

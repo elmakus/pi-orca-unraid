@@ -13,17 +13,29 @@ import uuid
 
 
 class SmokeFailure(Exception):
-    pass
+    """A failure whose description never contains captured command output."""
+
+
+def record_failure(path, stage, reason, category):
+    """Write only test-owned diagnostic labels, never sensitive command output."""
+    if path is None:
+        return
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"result": "failure", "stage": stage, "reason": reason, "category": category}
+    destination.write_text(json.dumps(payload, indent=2) + "\n")
 
 
 def run(args, timeout=45, check=True):
     try:
         result = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired):
-        raise SmokeFailure("command failed or exceeded its deadline") from None
+    except subprocess.TimeoutExpired:
+        raise SmokeFailure(f"subprocess timed out after {timeout}s; output withheld") from None
+    except OSError:
+        raise SmokeFailure("subprocess could not start; output withheld") from None
     if check and result.returncode:
-        raise SmokeFailure("command returned a failure (output withheld)")
+        raise SmokeFailure(f"subprocess exited with status {result.returncode}; output withheld")
     return result
 
 
@@ -39,7 +51,7 @@ def require(condition, message):
         raise SmokeFailure(message)
 
 
-def main(image):
+def main(image, diagnostic_file=None):
     name = "pi-orca-smoke-" + uuid.uuid4().hex[:12]
     temporary = Path(tempfile.mkdtemp(prefix=name + "-"))
     home, workspace = temporary / "home", temporary / "workspace"
@@ -135,14 +147,18 @@ def main(image):
             git init -q
             git -c user.name=Smoke -c user.email=smoke@example.invalid commit --allow-empty -qm smoke
         """)
+        stage = "register fixture repository with Orca"
         repo = cli("repo", "add", "--path", "/workspace/repository")["repo"]["id"]
+        stage = "create fixture worktree"
         worktree = cli("worktree", "create", "--repo", "id:" + repo,
                        "--name", "smoke", "--setup", "skip")["worktree"]["id"]
         stage = "real Orca PTY"
+        stage = "create Orca PTY terminal"
         handle = cli("terminal", "create", "--worktree", "id:" + worktree)["terminal"]["handle"]
         nonce = uuid.uuid4().hex
         cli("terminal", "send", "--terminal", handle, "--text",
             "node -e \"console.log('PTY_' + '" + nonce + "')\"", "--enter")
+        stage = "observe PTY probe output"
         terminal_contains(handle, "PTY_" + nonce)
         stage = "managed Pi RPC startup"
         launch_managed_pi(cli, execute, worktree)
@@ -150,26 +166,39 @@ def main(image):
         child_code = ("import os,time; "
                       "open('/workspace/child-ready','w').write(str(os.getpid())); "
                       "time.sleep(300)")
+        stage = "dispatch long-running PTY child"
         cli("terminal", "send", "--terminal", handle, "--text",
             "python3 -c " + shlex.quote(child_code), "--enter")
+        stage = "wait for PTY child ready marker"
         end = time.monotonic() + 15
         while not (workspace / "child-ready").exists() and time.monotonic() < end:
             time.sleep(0.25)
         require((workspace / "child-ready").exists(), "long-lived PTY child did not start")
+        stage = "validate PTY child PID"
         child_pid = (workspace / "child-ready").read_text().strip()
         require(child_pid.isdigit(), "invalid child PID")
+        stage = "verify PTY child is alive"
         execute("kill", "-0", child_pid)
+        stage = "stop container with live child"
         started = time.monotonic()
         run(["docker", "stop", "--time", "30", name], timeout=35)
         elapsed = time.monotonic() - started
+        stage = "inspect stopped container state"
         state = decode(run(["docker", "inspect", "--format", "{{json .State}}", name]).stdout)
+        stage = "verify 30-second shutdown deadline"
         require(elapsed <= 30 and state["Running"] is False and state["Pid"] == 0,
                 "container did not fully stop within 30 seconds")
+        stage = "verify no forced kill or out-of-memory"
         require(state["ExitCode"] != 137 and not state["OOMKilled"], "container required forced termination")
         print("PASS: resolved versions, UID/GID1000, fresh binds, tools/venv, core PATH, native status/negative status")
         print("PASS: port6769, Orca PTY, managed Pi RPC without generation, live child and full shutdown <=30s")
-    except (SmokeFailure, KeyError, TypeError, ValueError, OSError):
-        print("FAIL: " + stage + "; sensitive command output withheld", file=sys.stderr)
+    except (SmokeFailure, KeyError, TypeError, ValueError, OSError) as exc:
+        category = type(exc).__name__
+        # All SmokeFailure reasons come from fixed assertions or numeric exit statuses.
+        # Never print details of unexpected exceptions; they can include sensitive input.
+        reason = str(exc) if isinstance(exc, SmokeFailure) else "unexpected test exception; details withheld"
+        print(f"FAIL: stage={stage}; category={category}; reason={reason}", file=sys.stderr)
+        record_failure(diagnostic_file, stage, reason, category)
         return 1
     finally:
         run(["docker", "rm", "--force", name], timeout=35, check=False)
@@ -235,7 +264,7 @@ else:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        print("Usage: runtime-smoke.py IMAGE", file=sys.stderr)
+    if len(sys.argv) not in (2, 4) or (len(sys.argv) == 4 and sys.argv[2] != "--diagnostic-file"):
+        print("Usage: runtime-smoke.py IMAGE [--diagnostic-file FILE]", file=sys.stderr)
         sys.exit(2)
-    sys.exit(main(sys.argv[1]))
+    sys.exit(main(sys.argv[1], sys.argv[3] if len(sys.argv) == 4 else None))
