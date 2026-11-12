@@ -80,7 +80,10 @@ RUN test -n "$PI_VERSION" && test -n "$GH_VERSION" \
 # The patched npm bundle becomes the default Pi used by Orca and CLI.
 COPY --from=patched_pi /opt/pi-patched /opt/pi-patched
 COPY --chmod=644 extensions/stream-stall-recovery.mjs /opt/pi-orca-extensions/stream-stall-recovery.mjs
-RUN test -x /opt/pi-patched/dist/bundle/cli.js \
+# A cold COPY --chmod build can leave its newly created parent directory at 0644.
+# Ensure the unprivileged runtime user can traverse the extension directory.
+RUN chmod 0755 /opt/pi-orca-extensions \
+    && test -x /opt/pi-patched/dist/bundle/cli.js \
     && rm /usr/local/bin/pi \
     && ln -s /opt/pi-patched/dist/bundle/cli.js /usr/local/bin/pi
 
@@ -122,6 +125,8 @@ ENV HOME=/home/agent \
     ORCA_PORT=6769 \
     ORCA_PAIRING_ADDRESS=192.168.2.104
 USER agent
+# Catch unreadable runtime extensions at build time, not after publication.
+RUN test -r /opt/pi-orca-extensions/stream-stall-recovery.mjs
 WORKDIR /workspace
 EXPOSE 6769
 STOPSIGNAL SIGTERM
