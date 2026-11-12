@@ -113,7 +113,11 @@ jobs:
           printf '%s' "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           docker push "$IMAGE:$TAG"
           python3 scripts/resolve.py registry --reference "$IMAGE:$TAG" > build/publication.json
-          test "$(jq -er .config_digest build/publication.json)" = "$(cat build/tested-image-id.txt)"
+          # Docker Engine may expose the immutable manifest digest as image Id (containerd),
+          # or the config digest (classic store). Both must match the tested local image.
+          tested_id=$(cat build/tested-image-id.txt)
+          [[ "$tested_id" =~ ^sha256:[0-9a-f]{64}$ ]]
+          jq -e --arg tested_id "$tested_id" '.digest == $tested_id or .config_digest == $tested_id' build/publication.json > /dev/null
           jq -er '.digest' build/publication.json
           if [[ "$FAIL_BEFORE_PROMOTION" == true ]]; then
             echo 'Deliberate failure: tested version published, latest not touched.'
