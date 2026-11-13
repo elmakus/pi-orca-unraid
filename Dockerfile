@@ -9,7 +9,9 @@ RUN test -n "$UTC_DATE" \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
        bash ca-certificates curl wget git openssh-client ripgrep fd-find jq \
-       python3 python3-venv dumb-init procps iproute2 iputils-ping dnsutils \
+       python3 python3-venv python3-pip python-is-python3 \
+       build-essential pkg-config file binutils zip unzip sqlite3 ffmpeg golang-go \
+       dumb-init procps iproute2 iputils-ping dnsutils \
        netcat-openbsd less xdg-utils libnotify4 libnss3 libxss1 libxtst6 \
        libuuid1 libsecret-1-0 libgbm1 python3-gi gir1.2-atspi-2.0 \
        at-spi2-core xdotool xclip xvfb libstdc++6 libgcc-s1 \
@@ -87,6 +89,17 @@ RUN chmod 0755 /opt/pi-orca-extensions \
     && rm /usr/local/bin/pi \
     && ln -s /opt/pi-patched/dist/bundle/cli.js /usr/local/bin/pi
 
+# Shared, image-owned tools for Pi, Orca and every child agent in every worktree.
+# Never put these tools under /home/agent: the Unraid persistent bind hides it.
+# Do not export VIRTUAL_ENV: project-local uv/venv environments remain isolated.
+RUN python3 -m venv /opt/agent-tools \
+    && /opt/agent-tools/bin/python -m pip install --disable-pip-version-check --no-cache-dir "uv==0.13.8" \
+    && /opt/agent-tools/bin/uv pip install --python /opt/agent-tools/bin/python \
+       "pytest>=8,<10" "hypothesis>=6,<7" "ruff>=0.10,<1" \
+       "mypy>=1,<2" "isort>=6,<8" "jsonschema>=4,<5" \
+    && /opt/agent-tools/bin/python -m pip check \
+    && chmod -R a+rX,go-w /opt/agent-tools
+
 # Current Ketch and Agent Browser CLI releases are resolved at build time.
 # Install outside /home/agent: it is replaced by an Unraid bind mount at runtime.
 RUN NPM_CONFIG_PREFIX=/usr/local npm install -g --no-audit --no-fund ketch-cli@latest agent-browser@latest \
@@ -121,7 +134,7 @@ COPY --chmod=755 entrypoint.sh /usr/local/bin/start-pi-orca
 ENV HOME=/home/agent \
     PI_PACKAGE_DIR=/opt/pi-patched \
     NPM_CONFIG_PREFIX=/home/agent/.local/npm \
-    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/home/agent/.local/npm/bin \
+    PATH=/opt/agent-tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/home/agent/.local/bin:/home/agent/.local/npm/bin \
     ORCA_PORT=6769 \
     ORCA_PAIRING_ADDRESS=192.168.2.104
 USER agent

@@ -127,7 +127,27 @@ def main(image, diagnostic_file=None):
             test "$(id -u)" = 1000 && test "$(id -g)" = 1000
             test "$HOME" = /home/agent && test "$(pwd)" = /workspace
             touch /home/agent/.write-test /workspace/.write-test
-            for tool in npm python3 git ssh gh rg fd jq curl wget dumb-init ketch agent-browser; do command -v "$tool" >/dev/null; done
+            for tool in npm python python3 pip pip3 uv pytest ruff mypy isort \
+                go gofmt gcc g++ make pkg-config file strings zip unzip sqlite3 ffmpeg \
+                git ssh gh rg fd jq curl wget dumb-init ketch agent-browser; do
+                command -v "$tool" >/dev/null
+            done
+            test "$(command -v python3)" = /opt/agent-tools/bin/python3
+            test "$(command -v pip3)" = /opt/agent-tools/bin/pip3
+            test "$(command -v pytest)" = /opt/agent-tools/bin/pytest
+            python3 -m pytest --version >/dev/null
+            python3 -m pip --version >/dev/null
+            python3 -m pip check >/dev/null
+            python3 -c 'import pytest, hypothesis, ruff, mypy, isort, jsonschema'
+            uv --version >/dev/null
+            go version >/dev/null
+            mkdir /workspace/other-project
+            (
+                cd /workspace/other-project
+                python3 -m pytest --version >/dev/null
+                python3 -c 'import hypothesis, jsonschema'
+                node -e 'const {spawnSync}=require("node:child_process"); const r=spawnSync("python3",["-m","pytest","--version"],{stdio:"ignore"}); process.exit(r.status ?? 1)'
+            )
             test -x /usr/local/bin/pi-orca-chrome
             python3 -m venv /home/agent/smoke-venv
             /home/agent/smoke-venv/bin/python -m pip --version >/dev/null
@@ -190,7 +210,7 @@ def main(image, diagnostic_file=None):
                 "container did not fully stop within 30 seconds")
         stage = "verify no forced kill or out-of-memory"
         require(state["ExitCode"] != 137 and not state["OOMKilled"], "container required forced termination")
-        print("PASS: resolved versions, UID/GID1000, fresh binds, tools/venv, core PATH, native status/negative status")
+        print("PASS: resolved versions, UID/GID1000, fresh binds, shared agent tools in every project and subprocess, core PATH, native status/negative status")
         print("PASS: port6769, Orca PTY, managed Pi RPC without generation, live child and full shutdown <=30s")
     except (SmokeFailure, KeyError, TypeError, ValueError, OSError) as exc:
         category = type(exc).__name__
