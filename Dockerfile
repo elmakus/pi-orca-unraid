@@ -100,6 +100,16 @@ RUN python3 -m venv /opt/agent-tools \
     && /opt/agent-tools/bin/python -m pip check \
     && chmod -R a+rX,go-w /opt/agent-tools
 
+# Debian login shells reset PATH to /usr/local/bin, hiding /opt/agent-tools/bin.
+# Forward commands through /usr/local/bin so login shells and child agents use
+# the same shared interpreter (symlinking python3 loses venv detection).
+RUN set -eu; \
+    for tool in python python3 pip pip3 uv uvx pytest ruff mypy isort; do \
+        test -x "/opt/agent-tools/bin/$tool"; \
+        printf '#!/bin/sh\nexec /opt/agent-tools/bin/%s "$@"\n' "$tool" > "/usr/local/bin/$tool"; \
+        chmod 0755 "/usr/local/bin/$tool"; \
+    done
+
 # Current Ketch and Agent Browser CLI releases are resolved at build time.
 # Install outside /home/agent: it is replaced by an Unraid bind mount at runtime.
 RUN NPM_CONFIG_PREFIX=/usr/local npm install -g --no-audit --no-fund ketch-cli@latest agent-browser@latest \

@@ -160,6 +160,17 @@ def main(image, diagnostic_file=None):
             test "$(stat -c %u /opt/pi/pi)" = 0 && test ! -w /opt/pi/pi
             test "$(stat -c %u /opt/Orca)" = 0 && test ! -w /opt/Orca
         """)
+        stage = "login shell, project and child tool availability"
+        execute("bash", "-lc", """
+            test "$(command -v python3)" = /usr/local/bin/python3
+            test "$(command -v pip3)" = /usr/local/bin/pip3
+            test "$(command -v pytest)" = /usr/local/bin/pytest
+            python3 -m pytest --version >/dev/null
+            python3 -c 'import pytest, hypothesis, ruff, mypy, isort, jsonschema'
+            cd /workspace/other-project
+            python3 -m pytest --version >/dev/null
+            node -e 'const {spawnSync}=require("node:child_process"); const r=spawnSync("python3",["-c","import pytest,hypothesis,ruff,jsonschema"],{stdio:"ignore"}); process.exit(r.status ?? 1)'
+        """)
         execute("python3", "-c", "import socket; s=socket.create_connection(('127.0.0.1',6769),5); s.close()")
         stage = "real repository and worktree"
         execute("sh", "-ec", """
@@ -180,6 +191,11 @@ def main(image, diagnostic_file=None):
             "node -e \"console.log('PTY_' + '" + nonce + "')\"", "--enter")
         stage = "observe PTY probe output"
         terminal_contains(handle, "PTY_" + nonce)
+        # The actual Orca PTY may launch a login shell that resets PATH.
+        cli("terminal", "send", "--terminal", handle, "--text",
+            "python3 -c 'import pytest,hypothesis; print(\"ORCA_\"+\"PYTOOLS_OK\")'",
+            "--enter")
+        terminal_contains(handle, "ORCA_PYTOOLS_OK")
         stage = "managed Pi RPC startup"
         launch_managed_pi(cli, execute, worktree)
         stage = "child startup and full shutdown"
